@@ -33,6 +33,10 @@ INTERNAL_SUFFIXES = (
     ".test",
 )
 LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+BLOCKED_DESTINATION_MESSAGE = (
+    "Website destination must be public. Use the site's public URL "
+    "instead of localhost or a private address."
+)
 SPECIAL_IPS = tuple(
     map(
         ipaddress.ip_network,
@@ -72,15 +76,16 @@ def require_public_ip(value: str) -> str:
         )
         or any(address in network for network in SPECIAL_IPS)
     ):
-        raise AnalysisError(
-            400, "blocked_destination", "Website destination must be public."
-        )
+        raise AnalysisError(400, "blocked_destination", BLOCKED_DESTINATION_MESSAGE)
     return str(address)
 
 
 def validate_url(value: str) -> httpx.URL:
     invalid = AnalysisError(
-        400, "invalid_url", "Supply a valid public HTTP or HTTPS URL."
+        400,
+        "invalid_url",
+        "Enter a complete public URL starting with http:// or https://, "
+        "such as https://example.com.",
     )
     if not value or len(value) > 2048 or re.search(r"[\s\x00-\x1f\x7f\\]", value):
         raise invalid
@@ -106,7 +111,7 @@ def validate_url(value: str) -> httpx.URL:
             labels = host.split(".")
             if len(labels) < 2 or host.endswith(INTERNAL_SUFFIXES):
                 raise AnalysisError(
-                    400, "blocked_destination", "Website destination must be public."
+                    400, "blocked_destination", BLOCKED_DESTINATION_MESSAGE
                 )
             if len(host) > 253 or not all(LABEL.fullmatch(label) for label in labels):
                 raise invalid

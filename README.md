@@ -92,14 +92,20 @@ The response includes the final landing page URL, pages supplied as evidence, an
 
 ### Errors
 
-The API returns a stable error code and a sanitized message.
+The API returns a stable error code and a sanitized message with guidance.
+
+| Input | Status and code | How to fix the request |
+| --- | --- | --- |
+| Missing, blank, or non-string URL | `422 invalid_request` | Send a non-empty string in the JSON `url` field. |
+| Malformed URL | `400 invalid_url` | Include the full `http://` or `https://` URL, such as `https://example.com`. |
+| Localhost or a private destination | `400 blocked_destination` | Use a publicly reachable website URL. |
 
 ```json
 {
   "success": false,
   "error": {
     "code": "blocked_destination",
-    "message": "Website destination must be public."
+    "message": "Website destination must be public. Use the site's public URL instead of localhost or a private address."
   }
 }
 ```

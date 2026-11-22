@@ -394,15 +394,16 @@ def test_schema_rejects_invalid_values(problem):
 
 
 @pytest.mark.parametrize(
-    "body,status,code",
+    "body,status,code,guidance",
     [
-        ({}, 422, "invalid_request"),
-        ({"url": 123}, 422, "invalid_request"),
-        ({"url": "secret invalid url"}, 400, "invalid_url"),
-        ({"url": "http://localhost"}, 400, "blocked_destination"),
+        ({}, 422, "invalid_request", 'required "url"'),
+        ({"url": "  "}, 422, "invalid_request", "is empty"),
+        ({"url": 123}, 422, "invalid_request", "must be a string"),
+        ({"url": "secret invalid url"}, 400, "invalid_url", "https://example.com"),
+        ({"url": "http://localhost"}, 400, "blocked_destination", "public URL"),
     ],
 )
-async def test_invalid_request(endpoint, body, status, code):
+async def test_invalid_request(endpoint, body, status, code, guidance):
     def handler(request):
         pytest.fail("Invalid requests must not invoke the provider")
 
@@ -410,6 +411,7 @@ async def test_invalid_request(endpoint, body, status, code):
         response = await client.post("/link-analysis", json=body)
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
+    assert guidance in response.json()["error"]["message"]
     assert "secret invalid url" not in response.text
 
 

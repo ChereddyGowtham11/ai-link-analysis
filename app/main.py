@@ -92,9 +92,17 @@ async def handle_analysis_error(request: Request, exc: AnalysisError) -> JSONRes
 async def handle_request_error(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    return error_response(
-        422, "invalid_request", "Provide a JSON object with a valid string URL."
-    )
+    message = 'Send a JSON object such as {"url": "https://example.com"}.'
+    for error in exc.errors():
+        if tuple(error["loc"]) == ("body", "url"):
+            messages = {
+                "missing": 'Add the required "url" field with a public website URL.',
+                "string_too_short": 'The "url" field is empty. Enter a public URL.',
+                "string_too_long": 'The "url" field must be 2,048 characters or fewer.',
+            }
+            message = messages.get(error["type"], 'The "url" field must be a string.')
+            break
+    return error_response(422, "invalid_request", message)
 
 
 @app.exception_handler(Exception)
