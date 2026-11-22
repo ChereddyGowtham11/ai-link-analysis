@@ -1,7 +1,12 @@
 import asyncio
 import logging
 from time import perf_counter
+from typing import Protocol
 
+import httpx
+from google.genai import errors as gemini_errors
+from google.genai import types
+from google.genai.client import AsyncClient as GeminiAsyncClient
 from openai import (
     APIError,
     APITimeoutError,
@@ -39,6 +44,10 @@ or list fewer than five and explain. Prioritize observed offerings first.
 Generate concise business-specific recommendations and return schema-compliant JSON.
 """
 MAX_OUTPUT_TOKENS = 4500
+
+
+class ModelProvider(Protocol):
+    async def analyze(self, website_json: str) -> ModelAnalysis: ...
 
 
 class LLMService:
@@ -112,3 +121,82 @@ class LLMService:
                 getattr(usage, "input_tokens", None),
                 getattr(usage, "output_tokens", None),
             )
+
+
+class GeminiLLMService:
+    def __init__(self, client: GeminiAsyncClient, settings: Settings) -> None:
+        self.client = client
+        self.settings = settings
+
+    async def analyze(self, website_json: str) -> ModelAnalysis:
+        started = perf_counter()
+        usage = None
+        try:
+            async with asyncio.timeout(self.settings.llm_timeout_seconds):
+                response = await self.client.models.generate_content(
+                    model=self.settings.gemini_model,
+                    contents=[
+                        types.Content(
+                            role="user", parts=[types.Part(text=website_json)]
+                        )
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        response_mime_type="application/json",
+                        response_json_schema=ModelAnalysis.model_json_schema(),
+                        max_output_tokens=MAX_OUTPUT_TOKENS,
+                    ),
+                )
+            usage = response.usage_metadata
+            if (
+                not response.candidates
+                or response.candidates[0].finish_reason != types.FinishReason.STOP
+            ):
+                raise ValueError("Gemini returned incomplete or blocked analysis")
+            return ModelAnalysis.model_validate_json(response.text or "")
+        except (TimeoutError, httpx.TimeoutException):
+            raise AnalysisError(
+                504, "llm_timeout", "AI provider did not respond in time."
+            ) from None
+        except gemini_errors.APIError as error:
+            raise gemini_api_error(error) from None
+        except httpx.RequestError:
+            raise AnalysisError(
+                502, "llm_failure", "AI provider could not complete the analysis."
+            ) from None
+        except (ValueError, TypeError, AttributeError):
+            raise AnalysisError(
+                502, "invalid_llm_response", "AI provider returned invalid analysis."
+            ) from None
+        finally:
+            logger.info(
+                "llm_request model=%s duration_ms=%d input_tokens=%s output_tokens=%s",
+                self.settings.gemini_model,
+                round((perf_counter() - started) * 1000),
+                getattr(usage, "prompt_token_count", None),
+                getattr(usage, "candidates_token_count", None),
+            )
+
+
+def gemini_api_error(error: gemini_errors.APIError) -> AnalysisError:
+    if error.code == 429:
+        return AnalysisError(
+            503, "llm_rate_limit", "AI provider is temporarily rate limited."
+        )
+    if error.code in (408, 504):
+        return AnalysisError(504, "llm_timeout", "AI provider did not respond in time.")
+    body = error.details if isinstance(error.details, dict) else {}
+    payload = body.get("error", body)
+    details = payload.get("details") if isinstance(payload, dict) else None
+    if error.code in (401, 403, 404) or any(
+        isinstance(detail, dict)
+        and detail.get("reason")
+        in ("API_KEY_INVALID", "API_KEY_SERVICE_BLOCKED", "API_KEY_EXPIRED")
+        for detail in (details if isinstance(details, list) else [])
+    ):
+        return AnalysisError(
+            503, "llm_configuration", "AI provider access is unavailable."
+        )
+    return AnalysisError(
+        502, "llm_failure", "AI provider could not complete the analysis."
+    )

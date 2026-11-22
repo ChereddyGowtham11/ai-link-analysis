@@ -4,7 +4,7 @@ from time import perf_counter
 
 from app.schemas import LinkAnalysisResponse, Service
 from app.services.competitor_service import unverified_suggestions
-from app.services.llm_service import LLMService
+from app.services.llm_service import ModelProvider
 from app.services.website_extractor import Website, WebsiteExtractor, clean
 from app.utils.validators import validate_url
 
@@ -103,7 +103,7 @@ def ground_services(services: list[Service], pages: list[dict]) -> list[Service]
 
 
 class AnalysisService:
-    def __init__(self, extractor: WebsiteExtractor, llm: LLMService) -> None:
+    def __init__(self, extractor: WebsiteExtractor, llm: ModelProvider) -> None:
         self.extractor = extractor
         self.llm = llm
 

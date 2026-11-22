@@ -26,6 +26,8 @@ The published figures cover different tasks and configurations. A representative
 
 **Fallback** — `gpt-6.1-terra` at **$0.01500** per sample analysis. Set `OPENAI_MODEL=gpt-6.1-terra` and restart the service to switch. Switching is manual to preserve predictable costs and surface a genuine upstream failure.
 
+**Gemini option** — `gemini-3.1-flash-lite` at **$0.00425** per sample analysis at standard paid rates. Set `GEMINI_API_KEY` and restart the service to select Gemini. Provider failures are returned to the caller, and the service makes one provider call per analysis.
+
 For planning, budget roughly **15–45 seconds** end to end for a responsive site and a full structured answer. This is an engineering estimate. The default service allows up to 15 seconds for the entire website stage and 60 seconds for the provider call. Page count, output length, provider queueing, network path, and cold starts will affect latency. Measure median and p95 from real requests before promising a latency target.
 
 The app removes boilerplate and duplicates, caps the extracted JSON, makes one provider request, and limits output to 4,500 tokens. Logs record token counts and wall time when available. An optional bounded TTL cache keyed by normalized content, model, and prompt version could reduce repeat spend without a database. Keep schema and prompt prefixes stable to improve provider-side cache reuse.

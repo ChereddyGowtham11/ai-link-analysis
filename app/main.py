@@ -5,7 +5,10 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from google import genai
+from google.genai import types
 from openai import AsyncOpenAI
+from pydantic import SecretStr
 
 from app.config import get_settings
 from app.schemas import (
@@ -15,11 +18,16 @@ from app.schemas import (
     LinkAnalysisResponse,
 )
 from app.services.analysis_service import AnalysisService
-from app.services.llm_service import LLMService
+from app.services.llm_service import GeminiLLMService, LLMService
 from app.services.website_extractor import WebsiteExtractor
 from app.utils.validators import AnalysisError, validate_url
 
 logger = logging.getLogger(__name__)
+
+
+def configured_key(secret: SecretStr | None) -> str:
+    key = secret.get_secret_value().strip() if secret else ""
+    return "" if key == "your_api_key_here" else key
 
 
 @asynccontextmanager
@@ -31,9 +39,24 @@ async def lifespan(application: FastAPI):
     if not logging.getLogger().handlers:
         logging.basicConfig(level=settings.log_level)
         logging.getLogger("httpx").setLevel(logging.WARNING)
-    key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else ""
     application.state.analysis_service = None
-    if not key or key == "your_api_key_here":
+    gemini_key = configured_key(settings.gemini_api_key)
+    if gemini_key:
+        with genai.Client(
+            api_key=gemini_key,
+            vertexai=False,
+            http_options=types.HttpOptions(
+                retry_options=types.HttpRetryOptions(attempts=1)
+            ),
+        ) as client:
+            async with client.aio as async_client:
+                application.state.analysis_service = AnalysisService(
+                    WebsiteExtractor(settings), GeminiLLMService(async_client, settings)
+                )
+                yield
+        return
+    key = configured_key(settings.openai_api_key)
+    if not key:
         yield
         return
     async with AsyncOpenAI(

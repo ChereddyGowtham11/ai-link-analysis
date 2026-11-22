@@ -9,12 +9,12 @@ POST /link-analysis
   -> URL checks and DNS validation
   -> IP-pinned HTML fetch and optional same-origin crawl
   -> BeautifulSoup extraction and bounded evidence JSON
-  -> One OpenAI Responses API call with strict JSON Schema
+  -> One Gemini or OpenAI API call with structured JSON
   -> Pydantic validation and evidence checks
   -> Structured JSON response
 ```
 
-Python 3.11+, FastAPI, Uvicorn, Pydantic v2, Pydantic Settings, HTTPX, BeautifulSoup, the official OpenAI SDK, pytest, pytest-asyncio, and Ruff.
+Python 3.11+, FastAPI, Uvicorn, Pydantic v2, Pydantic Settings, HTTPX, BeautifulSoup, the official Google Gen AI and OpenAI SDKs, pytest, pytest-asyncio, and Ruff.
 
 ```text
 app/
@@ -23,7 +23,7 @@ app/
   schemas.py                   Request, response, and provider schemas
   services/
     website_extractor.py       Fetching and extraction
-    llm_service.py             OpenAI integration
+    llm_service.py             Gemini and OpenAI integration
     analysis_service.py         Evidence and pipeline orchestration
     competitor_service.py      Competitor suggestion validation
   utils/validators.py          URL and IP security
@@ -50,7 +50,7 @@ Copy-Item .env.example .env
 
 Windows Command Prompt users can activate with `.venv\Scripts\activate`. On macOS or Linux, run `source .venv/bin/activate` and `cp .env.example .env`.
 
-Set `OPENAI_API_KEY` in `.env` to a key with Responses API access, then run the API.
+Set `GEMINI_API_KEY` or `OPENAI_API_KEY` in `.env`, then run the API. Gemini takes precedence when both keys are configured. Each analysis calls the selected provider once.
 
 ```bash
 pip install -r requirements.txt
@@ -59,7 +59,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | Unset | Required for analysis. Health and Swagger are available without it. |
+| `GEMINI_API_KEY` | Unset | Enables the Gemini Developer API. |
+| `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Gemini model with structured output support. |
+| `OPENAI_API_KEY` | Unset | Enables the OpenAI Responses API when the Gemini key is unset. |
 | `OPENAI_MODEL` | `gpt-6-luna` | OpenAI Responses model with strict schema and `reasoning.effort=none` support. |
 | `LLM_TIMEOUT_SECONDS` | `60` | Total model call deadline, greater than 0 and at most 120 seconds. |
 | `HTTP_TIMEOUT_SECONDS` | `15` | Website-stage deadline, greater than 0 and at most 30 seconds. |
@@ -133,12 +135,12 @@ python -m ruff check --select E,F,I app tests
 python -m ruff format --check app tests
 ```
 
-Tests mock DNS, website requests, and the OpenAI transport. They cover IP pinning, redirect revalidation, extraction, size and time limits, provider errors, malformed and refused output, schema checks, evidence labels, and prompt role separation. The end-to-end test exercises the actual HTTP endpoint and official OpenAI SDK without an API key.
+Tests mock DNS, website requests, and both provider transports. They cover IP pinning, redirect revalidation, extraction, size and time limits, provider errors, malformed and refused output, schema checks, evidence labels, and prompt role separation. End-to-end tests exercise the HTTP endpoint and both official SDKs using test credentials.
 
 ## Deploy to Render
 
 1. Publish this directory as the root of a public GitHub repository and link that repository in **Render Dashboard → New → Blueprint**.
-2. Review the Docker web service and plan defined in `render.yaml`. Enter `OPENAI_API_KEY` when prompted and deploy.
+2. Review the Docker web service and plan defined in `render.yaml`. For OpenAI, enter `OPENAI_API_KEY` when prompted. For Gemini, enter `your_api_key_here` at the OpenAI prompt, deploy, then add `GEMINI_API_KEY` in the service's **Environment** tab and choose **Save, rebuild, and deploy**.
 3. Copy the service hostname from Render. The container binds to `0.0.0.0` and uses the host-provided `PORT`, with 4000 as the local default.
 
 The expected routes are `https://your-app.onrender.com/`, `/health`, `/docs`, and `POST /link-analysis`. Use your assigned hostname in these smoke commands.

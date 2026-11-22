@@ -1,11 +1,14 @@
 import asyncio
 import copy
 import json
+from contextlib import AsyncExitStack
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from google import genai
+from google.genai import types
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
@@ -13,7 +16,7 @@ from app.config import Settings
 from app.main import app, get_analysis_service
 from app.schemas import LinkAnalysisResponse, ModelAnalysis
 from app.services.analysis_service import AnalysisService, evidence_payload
-from app.services.llm_service import LLMService
+from app.services.llm_service import GeminiLLMService, LLMService
 from app.services.website_extractor import Page, Website, WebsiteExtractor
 
 SAMPLE = json.loads(
@@ -68,14 +71,32 @@ def provider_response(output: str, status: str = "completed") -> httpx.Response:
 
 @pytest.fixture
 async def endpoint():
-    async def make(handler, **overrides):
+    async def make(handler, *, gemini=False, **overrides):
         settings = Settings(max_crawl_pages=1, **overrides)
-        provider = AsyncOpenAI(
-            api_key="test-key",
-            max_retries=0,
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-        )
-        clients.append(provider)
+        provider_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        if gemini:
+            provider = clients.enter_context(
+                genai.Client(
+                    api_key="test-key",
+                    vertexai=False,
+                    http_options=types.HttpOptions(
+                        httpx_async_client=provider_http,
+                        retry_options=types.HttpRetryOptions(attempts=1),
+                    ),
+                )
+            )
+            model = GeminiLLMService(
+                await clients.enter_async_context(provider.aio), settings
+            )
+        else:
+            provider = await clients.enter_async_context(
+                AsyncOpenAI(
+                    api_key="test-key",
+                    max_retries=0,
+                    http_client=provider_http,
+                )
+            )
+            model = LLMService(provider, settings)
         extractor = WebsiteExtractor(
             settings,
             AsyncMock(return_value=["93.184.216.34"]),
@@ -87,17 +108,17 @@ async def endpoint():
                 )
             ),
         )
-        service = AnalysisService(extractor, LLMService(provider, settings))
+        service = AnalysisService(extractor, model)
         app.dependency_overrides[get_analysis_service] = lambda: service
         return httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         )
 
-    clients = []
-    yield make
-    app.dependency_overrides.clear()
-    for client in clients:
-        await client.close()
+    async with AsyncExitStack() as clients:
+        try:
+            yield make
+        finally:
+            app.dependency_overrides.clear()
 
 
 async def test_complete_endpoint_and_evidence_safeguards(endpoint, caplog):
@@ -173,6 +194,88 @@ async def test_complete_endpoint_and_evidence_safeguards(endpoint, caplog):
     assert result.analysis.target_audience.evidence_status == "inferred"
     assert len(calls) == 1
     assert "input_tokens=5000 output_tokens=2000" in caplog.text
+
+
+async def test_gemini_analysis_uses_same_schema_and_evidence(endpoint):
+    def handler(request):
+        assert request.url.path.endswith(
+            "/models/gemini-3.1-flash-lite:generateContent"
+        )
+        payload = json.loads(request.content)
+        system = payload["systemInstruction"]["parts"][0]["text"]
+        user = payload["contents"][0]
+        assert "untrusted" in system and INJECTION not in system
+        assert user["role"] == "user"
+        assert INJECTION in json.loads(user["parts"][0]["text"])["pages"][0]["text"]
+        config = payload["generationConfig"]
+        assert config["responseMimeType"] == "application/json"
+        assert config["responseJsonSchema"]["additionalProperties"] is False
+        assert "tools" not in payload
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": json.dumps(model_payload())}],
+                        },
+                        "finishReason": "STOP",
+                    }
+                ],
+                "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 200},
+            },
+        )
+
+    async with await endpoint(handler, gemini=True) as client:
+        response = await client.post(
+            "/link-analysis", json={"url": "https://example.com"}
+        )
+    assert response.status_code == 200
+    result = LinkAnalysisResponse.model_validate(response.json())
+    assert len(result.analysis.target_search_queries) == 5
+    assert result.analysis.top_services[0].evidence_status == "verified"
+
+
+@pytest.mark.parametrize(
+    "status,error,expected,code",
+    [
+        (400, {"details": [{"reason": "API_KEY_INVALID"}]}, 503, "llm_configuration"),
+        (429, {}, 503, "llm_rate_limit"),
+        (504, {}, 504, "llm_timeout"),
+        (500, {}, 502, "llm_failure"),
+    ],
+)
+async def test_gemini_provider_errors(endpoint, status, error, expected, code):
+    async with await endpoint(
+        lambda req: httpx.Response(
+            status,
+            json={
+                "error": {"code": status, "message": "provider detail", **error},
+            },
+        ),
+        gemini=True,
+    ) as client:
+        response = await client.post(
+            "/link-analysis", json={"url": "https://example.com"}
+        )
+    assert response.status_code == expected
+    assert response.json()["error"]["code"] == code
+    assert "provider detail" not in response.text
+
+
+async def test_gemini_incomplete_result(endpoint):
+    async with await endpoint(
+        lambda req: httpx.Response(
+            200, json={"candidates": [{"finishReason": "MAX_TOKENS"}]}
+        ),
+        gemini=True,
+    ) as client:
+        response = await client.post(
+            "/link-analysis", json={"url": "https://example.com"}
+        )
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "invalid_llm_response"
 
 
 @pytest.mark.parametrize(
@@ -291,6 +394,7 @@ async def test_startup_health_docs_and_missing_key(monkeypatch):
     from app.config import get_settings
 
     monkeypatch.setenv("OPENAI_API_KEY", "your_api_key_here")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
     get_settings.cache_clear()
     try:
         async with (
@@ -308,6 +412,19 @@ async def test_startup_health_docs_and_missing_key(monkeypatch):
                 "/link-analysis", json={"url": "https://example.com"}
             )
             assert response.status_code == 503
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_startup_prefers_gemini_with_both_keys(monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    get_settings.cache_clear()
+    try:
+        async with app.router.lifespan_context(app):
+            assert isinstance(app.state.analysis_service.llm, GeminiLLMService)
     finally:
         get_settings.cache_clear()
 

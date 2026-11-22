@@ -12,6 +12,8 @@ class Settings(BaseSettings):
 
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-6-luna"
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str = "gemini-3.1-flash-lite"
     llm_timeout_seconds: float = Field(60, gt=0, le=120)
     http_timeout_seconds: float = Field(15, gt=0, le=30)
     max_website_chars: int = Field(16_000, ge=4096, le=32_000)
