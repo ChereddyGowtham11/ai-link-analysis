@@ -209,7 +209,18 @@ async def test_gemini_analysis_uses_same_schema_and_evidence(endpoint):
         assert INJECTION in json.loads(user["parts"][0]["text"])["pages"][0]["text"]
         config = payload["generationConfig"]
         assert config["responseMimeType"] == "application/json"
-        assert config["responseJsonSchema"]["additionalProperties"] is False
+        schema = config["responseJsonSchema"]
+        assert schema["additionalProperties"] is False
+        queries = schema["$defs"]["Analysis"]["properties"]["target_search_queries"]
+        assert "minItems" not in queries and "maxItems" not in queries
+        platforms = schema["$defs"]["SearchQuery"]["properties"]["platforms"]
+        assert platforms["items"]["enum"] == [
+            "Google",
+            "Facebook",
+            "Instagram",
+            "LinkedIn",
+            "X",
+        ]
         assert "tools" not in payload
         return httpx.Response(
             200,
@@ -241,6 +252,18 @@ async def test_gemini_analysis_uses_same_schema_and_evidence(endpoint):
     "status,error,expected,code",
     [
         (400, {"details": [{"reason": "API_KEY_INVALID"}]}, 503, "llm_configuration"),
+        (
+            400,
+            {"message": "provider detail: response schema"},
+            502,
+            "llm_schema_rejected",
+        ),
+        (
+            400,
+            {"message": "provider detail: user location"},
+            503,
+            "llm_region_unavailable",
+        ),
         (429, {}, 503, "llm_rate_limit"),
         (504, {}, 504, "llm_timeout"),
         (500, {}, 502, "llm_failure"),

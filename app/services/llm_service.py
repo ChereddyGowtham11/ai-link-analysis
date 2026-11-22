@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from time import perf_counter
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 from google.genai import errors as gemini_errors
@@ -32,7 +32,7 @@ inferences. Mark audience and its segments inferred. Require evidence for geogra
 focus. Never invent search volume, rankings, CPC, impressions, Core Web Vitals,
 financial data, or measurements. Competitor candidates are unverified suggestions.
 Supply names with empty or null details. Never imply external research was performed.
-Use an empty list when credible candidates are unavailable.
+Suggest up to five competitors and use an empty list when none are credible.
 Supply exactly five distinct, naturally worded queries relevant to available evidence.
 Choose platforms where each query would help. For thin sites, favor topic or navigation
 queries and leave unsupported business facts blank.
@@ -40,7 +40,7 @@ Use the supplied title and meta description as observations. Explain why each SE
 recommendation would help. Propose local pages only when location evidence exists.
 For verified services, use the exact page URL and a short verbatim quote that explicitly
 names the offered service. Use inferred status and null evidence for proposed services,
-or list fewer than five and explain. Prioritize observed offerings first.
+or list fewer than five and explain. List at most five services and prioritize evidence.
 Generate concise business-specific recommendations and return schema-compliant JSON.
 """
 MAX_OUTPUT_TOKENS = 4500
@@ -143,7 +143,9 @@ class GeminiLLMService:
                     config=types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
                         response_mime_type="application/json",
-                        response_json_schema=ModelAnalysis.model_json_schema(),
+                        response_json_schema=gemini_generation_schema(
+                            ModelAnalysis.model_json_schema()
+                        ),
                         max_output_tokens=MAX_OUTPUT_TOKENS,
                     ),
                 )
@@ -159,7 +161,11 @@ class GeminiLLMService:
                 504, "llm_timeout", "AI provider did not respond in time."
             ) from None
         except gemini_errors.APIError as error:
-            raise gemini_api_error(error) from None
+            failure = gemini_api_error(error)
+            logger.warning(
+                "gemini_error upstream_status=%d code=%s", error.code, failure.code
+            )
+            raise failure from None
         except httpx.RequestError:
             raise AnalysisError(
                 502, "llm_failure", "AI provider could not complete the analysis."
@@ -178,6 +184,26 @@ class GeminiLLMService:
             )
 
 
+def gemini_generation_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    # Gemini expands array bounds into grammar states. Pydantic enforces exact counts.
+    result = {
+        key: value
+        for key, value in schema.items()
+        if key not in ("title", "minItems", "maxItems")
+    }
+    for key in ("properties", "$defs"):
+        if key in result:
+            result[key] = {
+                name: gemini_generation_schema(child)
+                for name, child in result[key].items()
+            }
+    if "items" in result:
+        result["items"] = gemini_generation_schema(result["items"])
+    if "anyOf" in result:
+        result["anyOf"] = [gemini_generation_schema(child) for child in result["anyOf"]]
+    return result
+
+
 def gemini_api_error(error: gemini_errors.APIError) -> AnalysisError:
     if error.code == 429:
         return AnalysisError(
@@ -185,17 +211,40 @@ def gemini_api_error(error: gemini_errors.APIError) -> AnalysisError:
         )
     if error.code in (408, 504):
         return AnalysisError(504, "llm_timeout", "AI provider did not respond in time.")
+    message = (error.message or "").casefold()
     body = error.details if isinstance(error.details, dict) else {}
     payload = body.get("error", body)
     details = payload.get("details") if isinstance(payload, dict) else None
-    if error.code in (401, 403, 404) or any(
-        isinstance(detail, dict)
-        and detail.get("reason")
-        in ("API_KEY_INVALID", "API_KEY_SERVICE_BLOCKED", "API_KEY_EXPIRED")
-        for detail in (details if isinstance(details, list) else [])
+    if (
+        error.code in (401, 403, 404)
+        or "api key not valid" in message
+        or any(
+            isinstance(detail, dict)
+            and detail.get("reason")
+            in ("API_KEY_INVALID", "API_KEY_SERVICE_BLOCKED", "API_KEY_EXPIRED")
+            for detail in (details if isinstance(details, list) else [])
+        )
     ):
         return AnalysisError(
             503, "llm_configuration", "AI provider access is unavailable."
+        )
+    if error.code == 400:
+        if "schema" in message or "constraint" in message:
+            return AnalysisError(
+                502, "llm_schema_rejected", "Gemini rejected the response schema."
+            )
+        if "location" in message or "region" in message or "country" in message:
+            return AnalysisError(
+                503,
+                "llm_region_unavailable",
+                "Gemini is unavailable in the deployment region.",
+            )
+        return AnalysisError(
+            502, "llm_request_rejected", "Gemini rejected the analysis request."
+        )
+    if error.code == 503:
+        return AnalysisError(
+            503, "llm_unavailable", "Gemini is temporarily unavailable."
         )
     return AnalysisError(
         502, "llm_failure", "AI provider could not complete the analysis."
