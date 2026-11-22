@@ -18,7 +18,16 @@ The Claude rate shown applies to prompts up to 100,000 input tokens. Google's ou
 - **Gemini 3.1 Flash-Lite** is designed for high-volume, low-latency work. Google's model card reports 363 output tokens per second and a 43.3% SimpleQA Verified result for the published configuration. It is a credible candidate for extracted-text analysis when using the Gemini API. [Gemini model reference](https://aistudio.google.com/docs/models/gemini-3.1-flash-lite) · [DeepMind model card](https://deepmind.google/models/model-cards/gemini-3-1-flash-lite/)
 - **Claude Haiku 5.5** is the fastest model in Anthropic's published comparison of its current lineup. Anthropic reports 85% on GPQA Diamond at default effort, a measure of graduate-level question answering. Its extraction focus and matching short-prompt price make it a candidate for a future cross-provider adapter. [Haiku model reference](https://platform.claude.com/docs/en/models/haiku-5-5/overview) · [Structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) · [Anthropic evaluation](https://platform.claude.com/docs/en/about-claude/models/optimizing-for-cost-and-intelligence)
 
-The published figures cover different tasks and configurations. A representative site corpus would be needed to compare service attribution, schema acceptance, and recommendation quality for this API. The Google throughput figure measures generation speed under its benchmark conditions. The API's latency is currently unmeasured with live model traffic.
+The published figures cover different tasks and configurations. Website analysis accuracy is unmeasured for all four models. The Google throughput figure measures generation speed under its benchmark conditions. The [live measurements](../evidence/live-metrics.json) show individual Gemini calls on Render. They give no estimate of median or p95 latency. OpenAI and Anthropic live latency on this workload are unmeasured.
+
+## Reliability in this application
+
+| Model | Application evidence |
+| --- | --- |
+| `gemini-3.1-flash-lite` | Live Render smoke requests and mocked SDK tests. Pydantic checks the five-query contract after generation. |
+| `gpt-6-luna` | Mocked SDK success and failure tests. An earlier deployment trial returned an upstream 429, so live generation remains unverified. |
+| `gpt-6.1-terra` | Documented OpenAI Responses compatibility. Application latency and output quality are unmeasured. |
+| `claude-haiku-5-5` | Documented structured output support. Application integration and reliability are unmeasured. |
 
 ## Recommendation and operating estimate
 
@@ -28,6 +37,6 @@ The published figures cover different tasks and configurations. A representative
 
 **Gemini option** — `gemini-3.1-flash-lite` at **$0.00425** per sample analysis at standard paid rates. Set `GEMINI_API_KEY` and restart the service to select Gemini. Provider failures are returned to the caller, and the service makes one provider call per analysis.
 
-For planning, budget roughly **15–45 seconds** end to end for a responsive site and a full structured answer. This is an engineering estimate. The default service allows up to 15 seconds for the entire website stage and 60 seconds for the provider call. Page count, output length, provider queueing, network path, and cold starts will affect latency. Measure median and p95 from real requests before promising a latency target.
+The default service allows up to 15 seconds for the subject website stage, 60 seconds for the provider call, and 10 seconds for optional competitor research. Page count, output length, provider queueing, network path, and cold starts affect end-to-end latency. Measure median and p95 from a representative sample before committing to a latency target.
 
-The app removes boilerplate and duplicates, caps the extracted JSON, makes one provider request, and limits output to 4,500 tokens. Logs record token counts and wall time when available. An optional bounded TTL cache keyed by normalized content, model, and prompt version could reduce repeat spend without a database. Keep schema and prompt prefixes stable to improve provider-side cache reuse.
+The app removes boilerplate and duplicates, caps the extracted JSON, makes one model request, and limits output to 4,500 tokens. Logs record token counts and wall time when available. Define `LLM_PRICE_MODEL`, `LLM_INPUT_USD_PER_MILLION`, and `LLM_OUTPUT_USD_PER_MILLION` to log a standard-rate USD estimate for that model. Gemini output totals include reported thinking tokens. Estimates exclude discounts and optional search fees. An optional bounded TTL cache keyed by normalized content, model, and prompt version could reduce repeat spend without a database.

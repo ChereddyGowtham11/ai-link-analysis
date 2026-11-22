@@ -150,6 +150,7 @@ async def test_complete_endpoint_and_evidence_safeguards(endpoint, caplog):
         }
     ]
     output["analysis"]["seo_improvements"]["current_title"] = "Fabricated SEO title"
+    output["analysis"]["target_audience"]["geographic_focus"] = ["Unsupported City"]
     calls = []
 
     def handler(request):
@@ -171,7 +172,13 @@ async def test_complete_endpoint_and_evidence_safeguards(endpoint, caplog):
         return provider_response(json.dumps(output))
 
     with caplog.at_level("INFO"):
-        async with await endpoint(handler) as client:
+        async with await endpoint(
+            handler,
+            brave_search_api_key=None,
+            llm_price_model="gpt-6-luna",
+            llm_input_usd_per_million="0.10",
+            llm_output_usd_per_million="0.50",
+        ) as client:
             response = await client.post(
                 "/link-analysis", json={"url": "https://example.com"}
             )
@@ -180,6 +187,8 @@ async def test_complete_endpoint_and_evidence_safeguards(endpoint, caplog):
     assert result.success and len(result.analysis.target_search_queries) == 5
     assert result.pages_analyzed == ["https://example.com"]
     assert result.analysis.seo_improvements.current_title == "Riverbend IT"
+    assert result.analysis.seo_improvements.supporting_content[0].reason
+    assert result.analysis.competitor_analysis.competitive_advantages
     assert result.analysis.top_services[0].evidence_status == "verified"
     for service in result.analysis.top_services[1:]:
         assert service.evidence_status == "inferred"
@@ -192,8 +201,16 @@ async def test_complete_endpoint_and_evidence_safeguards(endpoint, caplog):
         and competitor.weaknesses == []
     )
     assert result.analysis.target_audience.evidence_status == "inferred"
+    assert result.analysis.target_audience.audience_segments[0].marketing_recommendation
+    assert result.analysis.target_audience.geographic_focus == []
+    timing = response.headers["server-timing"]
+    assert all(
+        f"{stage};dur=" in timing for stage in ("fetch", "extract", "llm", "total")
+    )
     assert len(calls) == 1
     assert "input_tokens=5000 output_tokens=2000" in caplog.text
+    assert "estimated_usd=0.0015" in caplog.text
+    assert "analysis_request status=200 result=success" in caplog.text
 
 
 async def test_gemini_analysis_uses_same_schema_and_evidence(endpoint):

@@ -10,7 +10,7 @@ POST /link-analysis
   -> IP-pinned HTML fetch and optional same-origin crawl
   -> BeautifulSoup extraction and bounded evidence JSON
   -> One Gemini or OpenAI API call with structured JSON
-  -> Pydantic validation and evidence checks
+  -> Pydantic validation, optional competitor research, and evidence checks
   -> Structured JSON response
 ```
 
@@ -19,17 +19,19 @@ Python 3.11+, FastAPI, Uvicorn, Pydantic v2, Pydantic Settings, HTTPX, Beautiful
 ```text
 app/
   main.py                      FastAPI routes, lifespan, and error handling
+  metrics.py                   Request-scoped stage timings
   config.py                    Environment settings
   schemas.py                   Request, response, and provider schemas
   services/
     website_extractor.py       Fetching and extraction
     llm_service.py             Gemini and OpenAI integration
     analysis_service.py         Evidence and pipeline orchestration
-    competitor_service.py      Competitor suggestion validation
+    competitor_service.py      Competitor suggestions and optional Brave research
   utils/validators.py          URL and IP security
 tests/                         Offline tests and end-to-end mocked calls
 examples/                      Request and response JSON
 docs/LLM_COMPARISON.md          Provider research, cost and latency estimates
+evidence/                      Audit report, test logs, and live demonstration
 Dockerfile, render.yaml        Container and Render deployment
 ```
 
@@ -63,6 +65,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Gemini model with structured output support. |
 | `OPENAI_API_KEY` | Unset | Enables the OpenAI Responses API when the Gemini key is unset. |
 | `OPENAI_MODEL` | `gpt-6-luna` | OpenAI Responses model with strict schema and `reasoning.effort=none` support. |
+| `BRAVE_SEARCH_API_KEY` | Unset | Enables optional competitor research. |
+| `LLM_PRICE_MODEL` | Unset | Exact model ID covered by the optional estimate. |
+| `LLM_INPUT_USD_PER_MILLION` / `LLM_OUTPUT_USD_PER_MILLION` | Unset | Verified input and output rates used to log a token-cost estimate. |
 | `LLM_TIMEOUT_SECONDS` | `60` | Total model call deadline, greater than 0 and at most 120 seconds. |
 | `HTTP_TIMEOUT_SECONDS` | `15` | Website-stage deadline, greater than 0 and at most 30 seconds. |
 | `MAX_WEBSITE_CHARS` | `16000` | Serialized website evidence budget, from 4096 to 32000 characters. |
@@ -88,7 +93,13 @@ Invoke-RestMethod -Method Post -Uri http://localhost:4000/link-analysis `
 
 The [sample response](examples/sample_response.json) uses a fictional IT company to illustrate the shape. It is a test fixture. Live results come from the pages fetched for the request and the provider response.
 
-The response includes the final landing page URL, pages supplied as evidence, and extraction limitations. Services marked `verified` have a matching excerpt on a fetched page. The label describes website support for the service name. Audience suggestions are marked `inferred`. With no external competitor research, competitor suggestions carry names, the `unverified` label, and empty or null evidence fields.
+The response includes the final landing page URL, pages supplied as evidence, and extraction limitations. Brand category is in `brand.category`. `competitor_analysis.competitive_advantages` contains potential differentiators supported by the subject site. Services marked `verified` have a matching excerpt on a fetched page. Audience suggestions are marked `inferred`, and geographic focus requires a site mention.
+
+### Competitor evidence
+
+With `BRAVE_SEARCH_API_KEY` configured, the app looks up to five suggested competitors using bounded searches and checks matching HTTPS source pages through the same URL and IP validation as the subject fetch. The source page must corroborate the candidate's identity. A named offering is `verified` when present in the fetched page and `inferred` when supported by the search excerpt. The app cites the URLs, reports observed messaging strengths, and labels positioning gaps as potential opportunities. The source pages provide evidence of public messaging. A search result alone cannot establish service quality or market position.
+
+With search disabled or insufficient evidence, suggestions are `unverified` and retain their names with empty evidence fields. Search is optional and can incur provider charges when enabled. [Brave Web Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get)
 
 ### Errors
 
@@ -129,9 +140,11 @@ The API returns a stable error code and a sanitized message with guidance.
 - Use a shared website deadline, a connect timeout of up to five seconds, strict content-type and encoding checks, and a streamed 1 MiB limit per response. Linked pages may fail independently.
 - Strip common boilerplate and duplicate text and preserve relevant SEO data, visible content, and selected JSON-LD fields. Only bounded evidence JSON goes to one model call. The model can produce up to 4,500 output tokens.
 - Pass untrusted page data in the user message, keep system instructions separate, and give the model zero tools. Schema validation and server-side source checks constrain the returned data. Free-form analysis still depends on the model.
-- Store credentials in environment variables. Application logs include duration and token counts. The Responses call sets `store=False`.
+- Store credentials in environment variables. Request logs record status and stage durations, and provider logs record token counts when available. The Responses call sets `store=False`.
 
-See the [model comparison](docs/LLM_COMPARISON.md) for verified prices, quality evidence, and latency assumptions. The default model is GPT-6 Luna at approximately **$0.00150** for 5,000 input and 2,000 output tokens. The manual fallback, GPT-6.1 Terra, is approximately **$0.01500** for the same workload.
+The `Server-Timing` header reports `fetch`, `extract`, `llm`, and `total` in milliseconds when those stages run. Optional `competitors` timing includes its own fetch and extraction, which also contribute to those stage totals. A model-matched, configured rate logs an estimated cost at standard uncached rates when the provider reports both token counts. Compare the estimate with provider billing for actual cost.
+
+The hosted service uses Gemini 3.1 Flash-Lite. At standard paid rates its estimated cost is **$0.00425** for 5,000 input and 2,000 output tokens. The same workload costs approximately **$0.00150** on GPT-6 Luna. See the [model comparison](docs/LLM_COMPARISON.md) and [live performance evidence](evidence/live-metrics.json).
 
 ## Tests
 
@@ -142,6 +155,8 @@ python -m ruff format --check app tests
 ```
 
 Tests mock DNS, website requests, and both provider transports. They cover IP pinning, redirect revalidation, extraction, size and time limits, provider errors, malformed and refused output, schema checks, evidence labels, and prompt role separation. End-to-end tests exercise the HTTP endpoint and both official SDKs using test credentials.
+
+The [assessment report and evidence](evidence/README.md) link to the offline test transcripts, local startup log, Swagger capture, and separate live Gemini requests.
 
 ## Deploy to Render
 
@@ -186,6 +201,6 @@ Submit the GitHub repository URL and the Render service URL after verifying the 
 ## Known limitations and future improvements
 
 - Static HTML extraction has limited visibility into client-rendered websites and gated or compressed-only pages. Internal discovery favors common English link labels and paths.
-- Independent competitor verification and live search metrics require external data. Future research could return sourced comparisons, and a small labeled site corpus could measure extraction and attribution quality.
+- Competitor research checks a bounded set of search results and may yield fewer than three evidenced candidates. Search volumes, ad costs, and market share require separate data. Accuracy across a representative website corpus is unmeasured.
 - This assessment build has a public analysis route with no authentication or caller quotas. Model traffic is billed to the configured account. A production deployment can add gateway quotas and provider budget controls.
 - A bounded cache keyed by normalized site content and model version could reduce repeat costs. A browser-based extractor could support JavaScript-heavy sites with its own outbound network controls.

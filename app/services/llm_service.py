@@ -33,6 +33,9 @@ focus. Never invent search volume, rankings, CPC, impressions, Core Web Vitals,
 financial data, or measurements. Competitor candidates are unverified suggestions.
 Supply names with empty or null details. Never imply external research was performed.
 Suggest up to five competitors and use an empty list when none are credible.
+Describe brand strengths from the site. For competitive_advantages, provide only
+site-supported potential differentiators and use conditional wording for comparisons.
+Leave the list empty if no differentiator has supporting evidence.
 Supply exactly five distinct, naturally worded queries relevant to available evidence.
 Choose platforms where each query would help. For thin sites, favor topic or navigation
 queries and leave unsupported business facts blank.
@@ -48,6 +51,36 @@ MAX_OUTPUT_TOKENS = 4500
 
 class ModelProvider(Protocol):
     async def analyze(self, website_json: str) -> ModelAnalysis: ...
+
+
+def log_usage(
+    settings: Settings,
+    model: str,
+    started: float,
+    input_tokens: int | None,
+    output_tokens: int | None,
+) -> None:
+    cost = None
+    if (
+        model == settings.llm_price_model
+        and input_tokens is not None
+        and output_tokens is not None
+        and settings.llm_input_usd_per_million is not None
+        and settings.llm_output_usd_per_million is not None
+    ):
+        cost = (
+            input_tokens * settings.llm_input_usd_per_million
+            + output_tokens * settings.llm_output_usd_per_million
+        ) / 1_000_000
+    logger.info(
+        "llm_request model=%s duration_ms=%d input_tokens=%s output_tokens=%s "
+        "estimated_usd=%s",
+        model,
+        round((perf_counter() - started) * 1000),
+        input_tokens,
+        output_tokens,
+        cost,
+    )
 
 
 class LLMService:
@@ -79,7 +112,7 @@ class LLMService:
                     store=False,
                 )
             if not isinstance(response, Response):
-                raise ValueError("Invalid upstream response envelope")
+                raise TypeError("Invalid upstream response envelope")
             usage = response.usage
             if response.status != "completed" or not isinstance(response.output, list):
                 raise AnalysisError(
@@ -114,10 +147,10 @@ class LLMService:
                 502, "invalid_llm_response", "AI provider returned invalid analysis."
             ) from None
         finally:
-            logger.info(
-                "llm_request model=%s duration_ms=%d input_tokens=%s output_tokens=%s",
+            log_usage(
+                self.settings,
                 self.settings.openai_model,
-                round((perf_counter() - started) * 1000),
+                started,
                 getattr(usage, "input_tokens", None),
                 getattr(usage, "output_tokens", None),
             )
@@ -175,12 +208,15 @@ class GeminiLLMService:
                 502, "invalid_llm_response", "AI provider returned invalid analysis."
             ) from None
         finally:
-            logger.info(
-                "llm_request model=%s duration_ms=%d input_tokens=%s output_tokens=%s",
+            output_tokens = getattr(usage, "candidates_token_count", None)
+            if output_tokens is not None:
+                output_tokens += getattr(usage, "thoughts_token_count", None) or 0
+            log_usage(
+                self.settings,
                 self.settings.gemini_model,
-                round((perf_counter() - started) * 1000),
+                started,
                 getattr(usage, "prompt_token_count", None),
-                getattr(usage, "candidates_token_count", None),
+                output_tokens,
             )
 
 

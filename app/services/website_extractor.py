@@ -8,6 +8,7 @@ import httpx
 from bs4 import BeautifulSoup, NavigableString, ParserRejectedMarkup, Tag
 
 from app.config import Settings
+from app.metrics import measure
 from app.utils.validators import (
     AnalysisError,
     Resolver,
@@ -20,12 +21,12 @@ MAX_HTML_BYTES = 1_048_576
 MAX_REDIRECTS = 3
 REDIRECTS = {301, 302, 303, 307, 308}
 PAGE_WORDS = re.compile(
-    r"\b(about|services?|products?|solutions?|offerings?|expertise)\b", re.I
+    r"\b(about|services?|products?|solutions?|offerings?|expertise)\b", re.IGNORECASE
 )
 SECTION_WORDS = {
-    "about": re.compile(r"\b(about|who we are|our story)\b", re.I),
-    "services": re.compile(r"\b(services?|solutions?|what we do)\b", re.I),
-    "products": re.compile(r"\b(products?|offerings?|catalog)\b", re.I),
+    "about": re.compile(r"\b(about|who we are|our story)\b", re.IGNORECASE),
+    "services": re.compile(r"\b(services?|solutions?|what we do)\b", re.IGNORECASE),
+    "products": re.compile(r"\b(products?|offerings?|catalog)\b", re.IGNORECASE),
 }
 LD_FIELDS = (
     "@type",
@@ -426,7 +427,8 @@ class WebsiteExtractor:
         self, url: httpx.URL, same_origin: tuple[str, bytes, int | None] | None = None
     ) -> Page:
         try:
-            html, final_url = await self._fetch(url, same_origin)
+            with measure("fetch"):
+                html, final_url = await self._fetch(url, same_origin)
         except httpx.TimeoutException:
             raise AnalysisError(
                 504, "website_timeout", "Website did not respond in time."
@@ -439,14 +441,15 @@ class WebsiteExtractor:
             raise AnalysisError(
                 422, "empty_website", "Website returned an empty HTML response."
             )
-        if not re.search(r"<[a-z][a-z0-9:-]*(?:\s|/?>)", html, re.I):
+        if not re.search(r"<[a-z][a-z0-9:-]*(?:\s|/?>)", html, re.IGNORECASE):
             raise AnalysisError(
                 422, "invalid_html", "Website did not return recognizable HTML."
             )
         try:
-            page = await asyncio.to_thread(
-                extract_page, html, final_url, self.settings.max_website_chars
-            )
+            with measure("extract"):
+                page = await asyncio.to_thread(
+                    extract_page, html, final_url, self.settings.max_website_chars
+                )
         except (ParserRejectedMarkup, RecursionError):
             raise AnalysisError(
                 422, "invalid_html", "Website HTML could not be parsed."

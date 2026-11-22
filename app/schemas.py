@@ -40,7 +40,7 @@ class Competitor(StrictModel):
     strengths: list[str]
     weaknesses: list[str]
     competitive_gap: str
-    evidence_status: Literal["verified", "unverified"]
+    evidence_status: Literal["verified", "inferred", "unverified"]
     sources: list[str]
 
 
@@ -50,6 +50,7 @@ class CompetitorAnalysis(StrictModel):
     target_market: str
     competitors: list[Competitor] = Field(max_length=5)
     strengths: list[str]
+    competitive_advantages: list[str]
     opportunities: list[str]
 
 

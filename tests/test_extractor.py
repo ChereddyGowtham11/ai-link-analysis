@@ -174,3 +174,30 @@ async def test_website_timeout():
     with pytest.raises(AnalysisError) as exc:
         await extractor(handler).extract(URL)
     assert (exc.value.code, exc.value.status) == ("website_timeout", 504)
+
+
+async def test_restricted_redirect_never_reaches_transport():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(302, headers={"location": "http://127.0.0.1/"})
+
+    with pytest.raises(AnalysisError) as exc:
+        await extractor(handler).fetch_page(URL)
+    assert exc.value.code == "blocked_destination"
+    assert len(calls) == 1
+
+
+async def test_fetch_disables_environment_proxy_and_automatic_redirects(monkeypatch):
+    create_client = httpx.AsyncClient
+    recorded = []
+
+    def record_client(**kwargs):
+        recorded.append((kwargs.get("trust_env"), kwargs.get("follow_redirects")))
+        return create_client(**kwargs)
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setattr(httpx, "AsyncClient", record_client)
+    await extractor(lambda req: html_response()).fetch_page(URL)
+    assert recorded == [(False, False)]

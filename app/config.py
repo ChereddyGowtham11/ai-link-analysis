@@ -1,3 +1,4 @@
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
@@ -14,6 +15,10 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-6-luna"
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.1-flash-lite"
+    brave_search_api_key: SecretStr | None = None
+    llm_price_model: str = ""
+    llm_input_usd_per_million: Decimal | None = Field(default=None, ge=0)
+    llm_output_usd_per_million: Decimal | None = Field(default=None, ge=0)
     llm_timeout_seconds: float = Field(60, gt=0, le=120)
     http_timeout_seconds: float = Field(15, gt=0, le=30)
     max_website_chars: int = Field(16_000, ge=4096, le=32_000)

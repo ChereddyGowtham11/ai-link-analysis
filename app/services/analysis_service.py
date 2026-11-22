@@ -1,14 +1,12 @@
 import json
-import logging
-from time import perf_counter
 
+from app.metrics import measure
 from app.schemas import LinkAnalysisResponse, Service
-from app.services.competitor_service import unverified_suggestions
+from app.services.competitor_service import mentions, research_competitors
 from app.services.llm_service import ModelProvider
 from app.services.website_extractor import Website, WebsiteExtractor, clean
 from app.utils.validators import validate_url
 
-logger = logging.getLogger(__name__)
 EVIDENCE_FIELDS = (
     "title",
     "meta_description",
@@ -92,14 +90,21 @@ def ground_services(services: list[Service], pages: list[dict]) -> list[Service]
         if (
             item.evidence_status == "verified"
             and name
-            and name in quote
-            and any(quote in text for text in evidence.get(item.source_url, []))
+            and mentions(quote, name)
+            and any(mentions(text, quote) for text in evidence.get(item.source_url, []))
         ):
             continue
         item.evidence_status = "inferred"
         item.source_url = None
         item.evidence_quote = None
-    return sorted(services, key=lambda item: item.evidence_status != "verified")
+    seen = set()
+    unique = []
+    for item in sorted(services, key=lambda item: item.evidence_status != "verified"):
+        name = clean(item.service_name).casefold()
+        if name and name not in seen:
+            unique.append(item)
+            seen.add(name)
+    return unique
 
 
 class AnalysisService:
@@ -108,17 +113,37 @@ class AnalysisService:
         self.llm = llm
 
     async def analyze(self, raw_url: str) -> LinkAnalysisResponse:
-        started = perf_counter()
         website = await self.extractor.extract(validate_url(raw_url))
         payload, pages = evidence_payload(
             website, self.extractor.settings.max_website_chars
         )
-        result = await self.llm.analyze(payload)
+        with measure("llm"):
+            result = await self.llm.analyze(payload)
         analysis = result.analysis
         competitors = analysis.competitor_analysis
-        competitors.competitors = unverified_suggestions(
-            competitors.competitors, result.brand.name
+        landing = website.pages[0]
+        site_text = " ".join(
+            str(page.get(key) or "")
+            for page in pages
+            for key in ("text", "headings", "sections", "meta_description", "json_ld")
         )
+        offerings = [
+            item
+            for item in competitors.main_products_services
+            if item and mentions(site_text, item)
+        ]
+        competitors.competitors, competitor_note = await research_competitors(
+            competitors.competitors,
+            result.brand.name,
+            landing.url,
+            offerings,
+            self.extractor,
+        )
+        analysis.target_audience.geographic_focus = [
+            location
+            for location in analysis.target_audience.geographic_focus
+            if location and mentions(site_text, location)
+        ]
         analysis.top_services = ground_services(analysis.top_services, pages)
         verified_count = sum(
             item.evidence_status == "verified" for item in analysis.top_services
@@ -127,23 +152,17 @@ class AnalysisService:
             f"Services with supporting website excerpts: {verified_count}. "
             "Inferred entries are suggestions. Fewer than five may be available."
         )
-        landing = website.pages[0]
         analysis.seo_improvements.current_title = landing.data["title"]
         analysis.seo_improvements.current_meta_description = landing.data[
             "meta_description"
         ]
         limitations = [
             *website.limitations,
-            "Analysis uses static website content. "
-            "Competitor suggestions are unverified.",
+            "Analysis uses static website content.",
+            competitor_note,
         ]
         if len(pages) < len(website.pages):
             limitations.append("The evidence limit excluded some fetched pages.")
-        logger.info(
-            "analysis_completed pages=%d duration_ms=%d",
-            len(pages),
-            round((perf_counter() - started) * 1000),
-        )
         return LinkAnalysisResponse(
             brand=result.brand,
             analysis=analysis,

@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from time import perf_counter
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
@@ -11,6 +12,7 @@ from openai import AsyncOpenAI
 from pydantic import SecretStr
 
 from app.config import get_settings
+from app.metrics import stage_times
 from app.schemas import (
     ErrorDetail,
     ErrorResponse,
@@ -38,7 +40,8 @@ async def lifespan(application: FastAPI):
         logging.getLogger(f"app.services.{name}").setLevel(settings.log_level)
     if not logging.getLogger().handlers:
         logging.basicConfig(level=settings.log_level)
-        logging.getLogger("httpx").setLevel(logging.WARNING)
+    for name in ("httpx", "httpcore", "openai", "google_genai", "google.genai"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     application.state.analysis_service = None
     gemini_key = configured_key(settings.gemini_api_key)
     if gemini_key:
@@ -71,6 +74,38 @@ async def lifespan(application: FastAPI):
 app = FastAPI(
     title="AI-Powered Website Link Analysis API", version="1.0.0", lifespan=lifespan
 )
+
+
+@app.middleware("http")
+async def measure_analysis(request: Request, call_next):
+    if request.method != "POST" or request.url.path != "/link-analysis":
+        return await call_next(request)
+    times: dict[str, float] = {}
+    token = stage_times.set(times)
+    started = perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        times["total"] = (perf_counter() - started) * 1000
+        response.headers["Server-Timing"] = ", ".join(
+            f"{stage};dur={duration:.2f}" for stage, duration in times.items()
+        )
+        return response
+    finally:
+        stage_times.reset(token)
+        duration = (perf_counter() - started) * 1000
+        logger.info(
+            "analysis_request status=%d result=%s total_ms=%.2f fetch_ms=%.2f "
+            "extraction_ms=%.2f llm_ms=%.2f competitor_ms=%.2f",
+            status,
+            "success" if status < 400 else "failure",
+            duration,
+            times.get("fetch", 0),
+            times.get("extract", 0),
+            times.get("llm", 0),
+            times.get("competitors", 0),
+        )
 
 
 def get_analysis_service(request: Request) -> AnalysisService | None:
