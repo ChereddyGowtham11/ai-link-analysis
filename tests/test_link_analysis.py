@@ -168,6 +168,10 @@ async def test_complete_endpoint_and_evidence_safeguards(endpoint, caplog):
         assert INJECTION in json.loads(user["content"])["pages"][0]["text"]
         assert payload["text"]["format"]["strict"] is True
         assert payload["text"]["format"]["schema"]["additionalProperties"] is False
+        competitor_schema = payload["text"]["format"]["schema"]["$defs"][
+            "CompetitorAnalysis"
+        ]
+        assert "competitive_advantages" in competitor_schema["required"]
         assert payload["store"] is False and "tools" not in payload
         return provider_response(json.dumps(output))
 
@@ -473,6 +477,13 @@ async def test_startup_prefers_gemini_with_both_keys(monkeypatch):
 
 def test_sample_response_validates():
     assert LinkAnalysisResponse.model_validate(SAMPLE).success
+
+
+def test_legacy_response_without_competitive_advantages_remains_valid():
+    response = copy.deepcopy(SAMPLE)
+    del response["analysis"]["competitor_analysis"]["competitive_advantages"]
+    parsed = LinkAnalysisResponse.model_validate(response)
+    assert parsed.analysis.competitor_analysis.competitive_advantages == []
 
 
 def test_evidence_budget_preserves_valid_json():

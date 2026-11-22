@@ -45,12 +45,14 @@ class Competitor(StrictModel):
 
 
 class CompetitorAnalysis(StrictModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     brand_overview: str
     main_products_services: list[str]
     target_market: str
     competitors: list[Competitor] = Field(max_length=5)
     strengths: list[str]
-    competitive_advantages: list[str]
+    competitive_advantages: list[str] = Field(default_factory=list)
     opportunities: list[str]
 
 

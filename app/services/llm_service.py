@@ -103,7 +103,9 @@ class LLMService:
                         "format": {
                             "type": "json_schema",
                             "name": "website_analysis",
-                            "schema": ModelAnalysis.model_json_schema(),
+                            "schema": ModelAnalysis.model_json_schema(
+                                mode="serialization"
+                            ),
                             "strict": True,
                         }
                     },
@@ -177,7 +179,7 @@ class GeminiLLMService:
                         system_instruction=SYSTEM_PROMPT,
                         response_mime_type="application/json",
                         response_json_schema=gemini_generation_schema(
-                            ModelAnalysis.model_json_schema()
+                            ModelAnalysis.model_json_schema(mode="serialization")
                         ),
                         max_output_tokens=MAX_OUTPUT_TOKENS,
                     ),
