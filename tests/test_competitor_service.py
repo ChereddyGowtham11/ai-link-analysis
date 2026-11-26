@@ -71,7 +71,7 @@ async def test_competitor_research_classifies_sources_and_overlapping_offerings(
         [candidate(name) for name in names],
         "Subject",
         "https://subject.example",
-        ["IT support"],
+        ["IT support", "Onsite training"],
         extractor,
         transport=httpx.MockTransport(search_response),
     )
@@ -87,9 +87,11 @@ async def test_competitor_research_classifies_sources_and_overlapping_offerings(
     for row in rows[:4]:
         assert row.main_services == ["IT support"]
         assert row.sources and row.sources[0] == row.website
-        assert row.strengths and row.competitive_gap
+        assert row.strengths
         assert row.weaknesses == []
     assert rows[-1].website is None and rows[-1].sources == []
+    assert "Onsite training" in rows[0].competitive_gap
+    assert rows[3].competitive_gap == ""
 
 
 async def test_optional_search_failure_preserves_unverified_suggestions():
@@ -104,3 +106,50 @@ async def test_optional_search_failure_preserves_unverified_suggestions():
     )
     assert rows[0].evidence_status == "unverified" and not rows[0].sources
     assert "incomplete" in note
+
+
+async def test_wikidata_needs_no_key_and_cites_identity_and_offering():
+    name = "Northstar"
+    source = "https://northstar.example/"
+
+    def lookup(request):
+        assert request.url.host == "www.wikidata.org"
+        assert "x-subscription-token" not in request.headers
+        if request.url.params["action"] == "wbsearchentities":
+            return httpx.Response(200, json={"search": [{"id": "Q42", "label": name}]})
+        assert request.url.params["ids"] == "Q42"
+        return httpx.Response(
+            200,
+            json={
+                "entities": {
+                    "Q42": {
+                        "claims": {
+                            "P856": [{"mainsnak": {"datavalue": {"value": source}}}]
+                        }
+                    }
+                }
+            },
+        )
+
+    extractor = WebsiteExtractor(
+        Settings(brave_search_api_key=None, competitor_research="wikidata"),
+        AsyncMock(return_value=["93.184.216.34"]),
+        httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text="<title>Northstar</title><main><h2>IT support</h2></main>",
+            )
+        ),
+    )
+    rows, _ = await research_competitors(
+        [candidate(name)],
+        "Subject",
+        "https://subject.example",
+        ["IT support", "Onsite training"],
+        extractor,
+        transport=httpx.MockTransport(lookup),
+    )
+    assert rows[0].evidence_status == "verified"
+    assert rows[0].sources == [source, "https://www.wikidata.org/wiki/Q42"]
+    assert "Onsite training" in rows[0].competitive_gap

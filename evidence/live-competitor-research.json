@@ -1,0 +1,62 @@
+{
+  "captured_at": "2026-11-26T23:50:59+05:30",
+  "mode": "real Wikidata discovery and first-party HTTPS verification, manually supplied candidate names",
+  "subject": "https://basecamp.com/",
+  "competitors": [
+    {
+      "name": "Asana",
+      "website": "https://asana.com",
+      "main_services": [
+        "project management"
+      ],
+      "target_market": "",
+      "strengths": [
+        "Highlights project management in its public material."
+      ],
+      "weaknesses": [],
+      "competitive_gap": "Both sites mention project management. The subject site mentions file sharing, which was absent from the competitor's sampled offering text. Check other pages before drawing a conclusion.",
+      "evidence_status": "verified",
+      "sources": [
+        "https://asana.com",
+        "https://www.wikidata.org/wiki/Q4468073"
+      ]
+    },
+    {
+      "name": "ClickUp",
+      "website": "https://clickup.com/",
+      "main_services": [
+        "project management"
+      ],
+      "target_market": "",
+      "strengths": [
+        "Highlights project management in its public material."
+      ],
+      "weaknesses": [],
+      "competitive_gap": "Both sites mention project management. The subject site mentions file sharing, which was absent from the competitor's sampled offering text. Check other pages before drawing a conclusion.",
+      "evidence_status": "verified",
+      "sources": [
+        "https://clickup.com/",
+        "https://www.wikidata.org/wiki/Q123524232"
+      ]
+    },
+    {
+      "name": "monday.com",
+      "website": "https://monday.com/",
+      "main_services": [
+        "project management"
+      ],
+      "target_market": "",
+      "strengths": [
+        "Highlights project management in its public material."
+      ],
+      "weaknesses": [],
+      "competitive_gap": "Both sites mention project management. The subject site mentions file sharing, which was absent from the competitor's sampled offering text. Check other pages before drawing a conclusion.",
+      "evidence_status": "verified",
+      "sources": [
+        "https://monday.com/",
+        "https://www.wikidata.org/wiki/Q65073369"
+      ]
+    }
+  ],
+  "note": "Competitors with matching first-party evidence: 3. Inferred entries cite discovery sources. Coverage may be incomplete."
+}

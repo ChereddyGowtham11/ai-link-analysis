@@ -12,6 +12,7 @@ from openai import AsyncOpenAI
 from pydantic import SecretStr
 
 from app.config import get_settings
+from app.limits import AnalysisLimits
 from app.metrics import stage_times
 from app.schemas import (
     ErrorDetail,
@@ -43,6 +44,7 @@ async def lifespan(application: FastAPI):
     for name in ("httpx", "httpcore", "openai", "google_genai", "google.genai"):
         logging.getLogger(name).setLevel(logging.WARNING)
     application.state.analysis_service = None
+    application.state.analysis_limits = AnalysisLimits(settings)
     gemini_key = configured_key(settings.gemini_api_key)
     if gemini_key:
         with genai.Client(
@@ -112,15 +114,17 @@ def get_analysis_service(request: Request) -> AnalysisService | None:
     return getattr(request.app.state, "analysis_service", None)
 
 
-def error_response(status: int, code: str, message: str) -> JSONResponse:
+def error_response(
+    status: int, code: str, message: str, headers: dict[str, str] | None = None
+) -> JSONResponse:
     body = ErrorResponse(error=ErrorDetail(code=code, message=message))
-    return JSONResponse(status_code=status, content=body.model_dump())
+    return JSONResponse(status_code=status, content=body.model_dump(), headers=headers)
 
 
 @app.exception_handler(AnalysisError)
 async def handle_analysis_error(request: Request, exc: AnalysisError) -> JSONResponse:
     logger.warning("analysis_error code=%s status=%d", exc.code, exc.status)
-    return error_response(exc.status, exc.code, exc.message)
+    return error_response(exc.status, exc.code, exc.message, exc.headers)
 
 
 @app.exception_handler(RequestValidationError)
@@ -159,6 +163,7 @@ ERRORS = {
     413: "Website response exceeded the size limit",
     415: "Unsupported website content",
     422: "Invalid request or unusable website",
+    429: "Application analysis limit reached. See the Retry-After header.",
     500: "Internal application error",
     502: "Invalid or unavailable upstream response",
     503: "AI provider access unavailable or rate limited",
@@ -175,11 +180,14 @@ ERRORS = {
 )
 async def link_analysis(
     body: LinkAnalysisRequest,
+    request: Request,
     service: Annotated[AnalysisService | None, Depends(get_analysis_service)],
 ) -> LinkAnalysisResponse:
+    url = validate_url(body.url)
     if service is None:
-        validate_url(body.url)
         raise AnalysisError(
             503, "llm_configuration", "AI provider access is unavailable."
         )
-    return await service.analyze(body.url)
+    caller = request.client.host if request.client else "unknown"
+    with request.app.state.analysis_limits.reserve(caller):
+        return await service.analyze(url)

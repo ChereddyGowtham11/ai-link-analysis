@@ -9,3 +9,5 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-6-luna
+      - key: COMPETITOR_RESEARCH
+        value: wikidata

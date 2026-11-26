@@ -32,7 +32,8 @@ inferences. Mark audience and its segments inferred. Require evidence for geogra
 focus. Never invent search volume, rankings, CPC, impressions, Core Web Vitals,
 financial data, or measurements. Competitor candidates are unverified suggestions.
 Supply names with empty or null details. Never imply external research was performed.
-Suggest up to five competitors and use an empty list when none are credible.
+Aim for three to five plausible direct competitors when the website shows a clear
+market. Return fewer suggestions when the evidence is thin, or zero for a non-business.
 Describe brand strengths from the site. For competitive_advantages, provide only
 site-supported potential differentiators and use conditional wording for comparisons.
 Leave the list empty if no differentiator has supporting evidence.
@@ -41,9 +42,10 @@ Choose platforms where each query would help. For thin sites, favor topic or nav
 queries and leave unsupported business facts blank.
 Use the supplied title and meta description as observations. Explain why each SEO
 recommendation would help. Propose local pages only when location evidence exists.
-For verified services, use the exact page URL and a short verbatim quote that explicitly
-names the offered service. Use inferred status and null evidence for proposed services,
-or list fewer than five and explain. List at most five services and prioritize evidence.
+For verified services, quote a short affirmative statement in which the site explicitly
+describes its own offering, and use the exact page URL. A denied offering, a question,
+or another company's offering is insufficient. Use inferred status and null evidence
+for proposed services. List at most five services and prioritize evidence.
 Generate concise business-specific recommendations and return schema-compliant JSON.
 """
 MAX_OUTPUT_TOKENS = 4500

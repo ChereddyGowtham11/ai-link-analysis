@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.1-flash-lite"
     brave_search_api_key: SecretStr | None = None
+    competitor_research: Literal["off", "wikidata"] = "off"
+    analysis_per_day: int = Field(120, ge=1, le=10_000)
+    analysis_per_minute: int = Field(12, ge=1, le=300)
+    analysis_per_caller_per_minute: int = Field(5, ge=1, le=300)
+    analysis_max_in_flight: int = Field(3, ge=1, le=32)
     llm_price_model: str = ""
     llm_input_usd_per_million: Decimal | None = Field(default=None, ge=0)
     llm_output_usd_per_million: Decimal | None = Field(default=None, ge=0)

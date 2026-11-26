@@ -1,4 +1,4 @@
 All checks passed!
 All checks passed!
-17 files already formatted
+20 files already formatted
 No broken requirements found.

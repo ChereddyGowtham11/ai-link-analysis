@@ -20,6 +20,7 @@ Python 3.11+, FastAPI, Uvicorn, Pydantic v2, Pydantic Settings, HTTPX, Beautiful
 app/
   main.py                      FastAPI routes, lifespan, and error handling
   metrics.py                   Request-scoped stage timings
+  limits.py                    Request budgets and in-flight cap
   config.py                    Environment settings
   schemas.py                   Request, response, and provider schemas
   services/
@@ -65,7 +66,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Gemini model with structured output support. |
 | `OPENAI_API_KEY` | Unset | Enables the OpenAI Responses API when the Gemini key is unset. |
 | `OPENAI_MODEL` | `gpt-6-luna` | OpenAI Responses model with strict schema and `reasoning.effort=none` support. |
-| `BRAVE_SEARCH_API_KEY` | Unset | Enables optional competitor research. |
+| `COMPETITOR_RESEARCH` | `off` | Set to `wikidata` to discover official candidate sites without credentials. Render enables this option. |
+| `BRAVE_SEARCH_API_KEY` | Unset | Uses optional Brave discovery instead of Wikidata when configured. |
+| `ANALYSIS_PER_DAY` / `ANALYSIS_PER_MINUTE` | `120` / `12` | Global rolling request budgets per process. |
+| `ANALYSIS_PER_CALLER_PER_MINUTE` / `ANALYSIS_MAX_IN_FLIGHT` | `5` / `3` | Caller request and process concurrency limits. |
 | `LLM_PRICE_MODEL` | Unset | Exact model ID covered by the optional estimate. |
 | `LLM_INPUT_USD_PER_MILLION` / `LLM_OUTPUT_USD_PER_MILLION` | Unset | Verified input and output rates used to log a token-cost estimate. |
 | `LLM_TIMEOUT_SECONDS` | `60` | Total model call deadline, greater than 0 and at most 120 seconds. |
@@ -93,11 +97,11 @@ Invoke-RestMethod -Method Post -Uri http://localhost:4000/link-analysis `
 
 The [sample response](examples/sample_response.json) uses a fictional IT company to illustrate the shape. It is a test fixture. Live results come from the pages fetched for the request and the provider response.
 
-The response includes the final landing page URL, pages supplied as evidence, and extraction limitations. Brand category is in `brand.category`. `competitor_analysis.competitive_advantages` contains potential differentiators supported by the subject site. Services marked `verified` have a matching excerpt on a fetched page. Audience suggestions are marked `inferred`, and geographic focus requires a site mention.
+The response includes the final landing page URL, pages supplied as evidence, and extraction limitations. Citation URLs omit query strings and fragments. Brand category is in `brand.category`. `competitor_analysis.competitive_advantages` contains potential differentiators supported by the subject site. A `verified` service requires an affirmative first-party statement naming the offering. Geographic focus requires a structured location field or an explicit location phrase. Marketing segments are marked `inferred`.
 
 ### Competitor evidence
 
-With `BRAVE_SEARCH_API_KEY` configured, the app looks up to five suggested competitors using bounded searches and checks matching HTTPS source pages through the same URL and IP validation as the subject fetch. The source page must corroborate the candidate's identity. A named offering is `verified` when present in the fetched page and `inferred` when supported by the search excerpt. The app cites the URLs, reports observed messaging strengths, and labels positioning gaps as potential opportunities. The source pages provide evidence of public messaging. A search result alone cannot establish service quality or market position.
+The app researches up to five model-suggested competitors. Wikidata discovery uses public official-website statements to find candidate URLs. Brave can supply search excerpts when configured. Both paths validate and fetch source pages with the same URL and IP checks as the subject fetch. The source page must corroborate the candidate's identity. A shared offering is `verified` when present in both sites' sampled material. An overlap supported by a Brave excerpt is labeled `inferred`. The API cites the source pages, reports observed messaging strengths, and describes differences within the pages inspected. It leaves unsupported gaps blank. [Wikidata Data Access](https://www.wikidata.org/wiki/Help:Data_access) · [Brave Web Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get)
 
 With search disabled or insufficient evidence, suggestions are `unverified` and retain their names with empty evidence fields. Search is optional and can incur provider charges when enabled. [Brave Web Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get)
 
@@ -128,6 +132,7 @@ The API returns a stable error code and a sanitized message with guidance.
 | 413 | HTML response exceeded 1 MiB |
 | 415 | Unsupported content type or content encoding |
 | 422 | Invalid request body or unusable static HTML |
+| 429 | Application request or concurrency limit reached. Check `Retry-After`. |
 | 500 | Unexpected application error |
 | 502 | Website DNS, redirect, or gateway failure, or invalid/provider-failed AI response |
 | 503 | Provider configuration, authorization, or rate limit |
@@ -140,6 +145,7 @@ The API returns a stable error code and a sanitized message with guidance.
 - Use a shared website deadline, a connect timeout of up to five seconds, strict content-type and encoding checks, and a streamed 1 MiB limit per response. Linked pages may fail independently.
 - Strip common boilerplate and duplicate text and preserve relevant SEO data, visible content, and selected JSON-LD fields. Only bounded evidence JSON goes to one model call. The model can produce up to 4,500 output tokens.
 - Pass untrusted page data in the user message, keep system instructions separate, and give the model zero tools. Schema validation and server-side source checks constrain the returned data. Free-form analysis still depends on the model.
+- Keep query strings for the website fetch and strip them from evidence URLs before model calls and from returned citations. Submit public URLs without credentials or other sensitive data.
 - Store credentials in environment variables. Request logs record status and stage durations, and provider logs record token counts when available. The Responses call sets `store=False`.
 
 The `Server-Timing` header reports `fetch`, `extract`, `llm`, and `total` in milliseconds when those stages run. Optional `competitors` timing includes its own fetch and extraction, which also contribute to those stage totals. A model-matched, configured rate logs an estimated cost at standard uncached rates when the provider reports both token counts. Compare the estimate with provider billing for actual cost.
@@ -202,5 +208,5 @@ Submit the GitHub repository URL and the Render service URL after verifying the 
 
 - Static HTML extraction has limited visibility into client-rendered websites and gated or compressed-only pages. Internal discovery favors common English link labels and paths.
 - Competitor research checks a bounded set of search results and may yield fewer than three evidenced candidates. Search volumes, ad costs, and market share require separate data. Accuracy across a representative website corpus is unmeasured.
-- This assessment build has a public analysis route with no authentication or caller quotas. Model traffic is billed to the configured account. A production deployment can add gateway quotas and provider budget controls.
+- The public assessment route applies rolling and concurrency limits in memory. Counters reset on process restart and are independent across replicas. A multi-instance deployment requires shared gateway limits or provider budget controls.
 - A bounded cache keyed by normalized site content and model version could reduce repeat costs. A browser-based extractor could support JavaScript-heavy sites with its own outbound network controls.

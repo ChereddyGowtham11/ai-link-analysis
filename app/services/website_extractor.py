@@ -21,12 +21,15 @@ MAX_HTML_BYTES = 1_048_576
 MAX_REDIRECTS = 3
 REDIRECTS = {301, 302, 303, 307, 308}
 PAGE_WORDS = re.compile(
-    r"\b(about|services?|products?|solutions?|offerings?|expertise)\b", re.IGNORECASE
+    r"\b(about|services?|products?|solutions?|offerings?|expertise|features?)\b",
+    re.IGNORECASE,
 )
 SECTION_WORDS = {
     "about": re.compile(r"\b(about|who we are|our story)\b", re.IGNORECASE),
     "services": re.compile(r"\b(services?|solutions?|what we do)\b", re.IGNORECASE),
-    "products": re.compile(r"\b(products?|offerings?|catalog)\b", re.IGNORECASE),
+    "products": re.compile(
+        r"\b(products?|offerings?|catalog|features?)\b", re.IGNORECASE
+    ),
 }
 LD_FIELDS = (
     "@type",
