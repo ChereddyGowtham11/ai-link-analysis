@@ -66,7 +66,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Gemini model with structured output support. |
 | `OPENAI_API_KEY` | Unset | Enables the OpenAI Responses API when the Gemini key is unset. |
 | `OPENAI_MODEL` | `gpt-6-luna` | OpenAI Responses model with strict schema and `reasoning.effort=none` support. |
-| `COMPETITOR_RESEARCH` | `off` | Set to `wikidata` to discover official candidate sites without credentials. Render enables this option. |
+| `COMPETITOR_RESEARCH` | `wikidata` | Discovers official candidate sites without credentials. Set to `off` to disable keyless research. |
 | `BRAVE_SEARCH_API_KEY` | Unset | Uses optional Brave discovery instead of Wikidata when configured. |
 | `ANALYSIS_PER_DAY` / `ANALYSIS_PER_MINUTE` | `120` / `12` | Global rolling request budgets per process. |
 | `ANALYSIS_PER_CALLER_PER_MINUTE` / `ANALYSIS_MAX_IN_FLIGHT` | `5` / `3` | Caller request and process concurrency limits. |
@@ -101,7 +101,7 @@ The response includes the final landing page URL, pages supplied as evidence, an
 
 ### Competitor evidence
 
-The app researches up to five model-suggested competitors. Wikidata discovery uses public official-website statements to find candidate URLs. Brave can supply search excerpts when configured. Both paths validate and fetch source pages with the same URL and IP checks as the subject fetch. The source page must corroborate the candidate's identity. A shared offering is `verified` when present in both sites' sampled material. An overlap supported by a Brave excerpt is labeled `inferred`. The API cites the source pages, reports observed messaging strengths, and describes differences within the pages inspected. It leaves unsupported gaps blank. [Wikidata Data Access](https://www.wikidata.org/wiki/Help:Data_access) · [Brave Web Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get)
+The app researches up to five model-suggested competitors. Wikidata discovery uses public official-website statements to find candidate URLs. Brave can supply search excerpts when configured. Both paths validate and fetch source pages with the same URL and IP checks as the subject fetch. A shared offering is `verified` when present in both sites' sampled material. An overlap supported by the discovery source's description or excerpt is labeled `inferred`. The API cites its sources, reports observed messaging strengths, and describes differences within the pages inspected. It leaves unsupported gaps blank. [Wikidata Data Access](https://www.wikidata.org/wiki/Help:Data_access) · [Brave Web Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get)
 
 With search disabled or insufficient evidence, suggestions are `unverified` and retain their names with empty evidence fields. Search is optional and can incur provider charges when enabled. [Brave Web Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get)
 

@@ -75,7 +75,9 @@ def provider_response(output: str, status: str = "completed") -> httpx.Response:
 @pytest.fixture
 async def endpoint():
     async def make(handler, *, gemini=False, **overrides):
-        settings = Settings(max_crawl_pages=1, **overrides)
+        settings = Settings(
+            **{"max_crawl_pages": 1, "competitor_research": "off", **overrides}
+        )
         provider_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         if gemini:
             provider = clients.enter_context(

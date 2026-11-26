@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.1-flash-lite"
     brave_search_api_key: SecretStr | None = None
-    competitor_research: Literal["off", "wikidata"] = "off"
+    competitor_research: Literal["off", "wikidata"] = "wikidata"
     analysis_per_day: int = Field(120, ge=1, le=10_000)
     analysis_per_minute: int = Field(12, ge=1, le=300)
     analysis_per_caller_per_minute: int = Field(5, ge=1, le=300)

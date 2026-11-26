@@ -218,6 +218,7 @@ async def wikidata_sources(
                     CandidateSource(
                         address,
                         hits[item_id]["label"],
+                        excerpt=hits[item_id].get("description") or "",
                         reference=f"https://www.wikidata.org/wiki/{item_id}",
                     )
                 )
@@ -257,7 +258,7 @@ async def find_competitor(
         if not mentions(site_name, candidate.name) and not (
             brand_label
             and domain_label.replace("-", "") == brand_label
-            and mentions(site_title, candidate.name)
+            and (item.reference or mentions(site_title, candidate.name))
         ):
             continue
         sections = page.data.get("sections", {})

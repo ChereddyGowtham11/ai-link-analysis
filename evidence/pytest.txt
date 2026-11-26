@@ -90,4 +90,4 @@ tests/test_validators.py::test_mixed_dns_answers_rejected PASSED         [ 97%]
 tests/test_validators.py::test_dns_failure[outcome0] PASSED              [ 98%]
 tests/test_validators.py::test_dns_failure[outcome1] PASSED              [100%]
 
-============================= 81 passed in 5.81s ==============================
+============================= 81 passed in 6.65s ==============================
