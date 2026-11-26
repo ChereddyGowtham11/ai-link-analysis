@@ -170,6 +170,7 @@ class AnalysisService:
             landing.url,
             offerings,
             self.extractor,
+            market=result.brand.category,
         )
         analysis.target_audience.geographic_focus = [
             location

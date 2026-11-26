@@ -94,6 +94,80 @@ async def test_competitor_research_classifies_sources_and_overlapping_offerings(
     assert rows[3].competitive_gap == ""
 
 
+async def test_wikidata_discovers_competitors_when_the_model_omits_them():
+    names = ["Northstar", "Lakeside", "Juniper"]
+
+    def lookup(request):
+        if request.url.params["action"] == "query":
+            assert (
+                request.url.params["gsrsearch"]
+                == '"IT support services" haswbstatement:P856'
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "query": {
+                        "pages": [
+                            {"title": f"Q{index}", "index": index}
+                            for index, _ in enumerate(names, 1)
+                        ]
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "entities": {
+                    f"Q{index}": {
+                        "labels": {"en": {"value": name}},
+                        "descriptions": {
+                            "en": {"value": "Provider of IT support services"}
+                        },
+                        "claims": {
+                            "P856": [
+                                {
+                                    "mainsnak": {
+                                        "datavalue": {
+                                            "value": f"https://{name.lower()}.example/"
+                                        }
+                                    }
+                                },
+                            ]
+                        },
+                    }
+                    for index, name in enumerate(names, 1)
+                }
+            },
+        )
+
+    def site(request):
+        name = request.headers["host"].split(".")[0].title()
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text=f"<title>{name}</title><main><p>We offer IT support.</p></main>",
+        )
+
+    extractor = WebsiteExtractor(
+        Settings(brave_search_api_key=None, competitor_research="wikidata"),
+        AsyncMock(return_value=["93.184.216.34"]),
+        httpx.MockTransport(site),
+    )
+    rows, _ = await research_competitors(
+        [],
+        "Subject",
+        "https://subject.example/",
+        ["IT support"],
+        extractor,
+        market="IT support services",
+        transport=httpx.MockTransport(lookup),
+    )
+    assert [row.name for row in rows] == names
+    assert all(
+        row.evidence_status == "verified" and len(row.sources) == 2 for row in rows
+    )
+
+
 async def test_optional_search_failure_preserves_unverified_suggestions():
     extractor = WebsiteExtractor(Settings(brave_search_api_key="mock-brave-key"))
     rows, note = await research_competitors(

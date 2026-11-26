@@ -37,7 +37,7 @@ PASS means implemented and checked. PARTIAL means some behavior or verification 
 | [live-minimal.json](live-minimal.json) | Actual Gemini-backed response for Example Domain. |
 | [live-metrics.json](live-metrics.json) | Client elapsed times and observed headers for the two hosted requests. |
 | [local-extraction.json](local-extraction.json) | Real HTTPS fetch and HTML extraction timings from the updated local code. These runs made zero model calls. |
-| [live-competitor-research.json](live-competitor-research.json) | Real Wikidata and first-party HTTPS checks, with manually supplied competitor candidates and no model call. |
+| [live-competitor-research.json](live-competitor-research.json) | Real Wikidata category discovery and first-party HTTPS checks. Starting from one candidate, the researcher found three verified competitors without a model call. |
 | [live-errors.json](live-errors.json) | Hosted missing URL, malformed URL, private IP, localhost and missing page responses. |
 
 The two observed round trips were 10.74 seconds for Basecamp and 4.56 seconds for Example Domain. Both returned all five sections and exactly five queries. These are individual observations. The updated local fetch and extraction stages measured 2,079.31 ms and 271.99 ms for Basecamp and 87.73 ms and 1.76 ms for Example Domain. Estimated cost logging was exercised in the mocked integration test. The hosted revision captured here predates those additions.

@@ -33,6 +33,20 @@ class CandidateSource:
     reference: str | None = None
 
 
+def suggestion(name: str) -> Competitor:
+    return Competitor(
+        name=name,
+        website=None,
+        main_services=[],
+        target_market="",
+        strengths=[],
+        weaknesses=[],
+        competitive_gap="",
+        evidence_status="unverified",
+        sources=[],
+    )
+
+
 def unverified_suggestions(
     candidates: list[Competitor], brand_name: str
 ) -> list[Competitor]:
@@ -45,19 +59,7 @@ def unverified_suggestions(
         if not key or key in seen or len(name) > 100 or "://" in name:
             continue
         seen.add(key)
-        suggestions.append(
-            Competitor(
-                name=name,
-                website=None,
-                main_services=[],
-                target_market="",
-                strengths=[],
-                weaknesses=[],
-                competitive_gap="",
-                evidence_status="unverified",
-                sources=[],
-            )
-        )
+        suggestions.append(suggestion(name))
     return suggestions
 
 
@@ -72,6 +74,7 @@ async def research_competitors(
     offerings: list[str],
     extractor: WebsiteExtractor,
     *,
+    market: str = "",
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[list[Competitor], str]:
     competitors = unverified_suggestions(candidates, brand_name)
@@ -83,7 +86,7 @@ async def research_competitors(
     terms = list(
         dict.fromkeys(clean(term) for term in offerings if 4 <= len(clean(term)) <= 80)
     )[:5]
-    if not terms or not competitors:
+    if not terms or (not competitors and not market):
         return (
             competitors,
             "The analysis found too little evidence to research competitors.",
@@ -94,7 +97,7 @@ async def research_competitors(
     try:
         with measure("competitors"):
             async with (
-                asyncio.timeout(10),
+                asyncio.timeout(16),
                 httpx.AsyncClient(
                     timeout=4,
                     trust_env=False,
@@ -127,8 +130,41 @@ async def research_competitors(
                     )
                     if researched:
                         competitors[index] = researched
-    except (TimeoutError, httpx.HTTPError, ValueError):
+                if (
+                    not key
+                    and not incomplete
+                    and sum(row.evidence_status == "verified" for row in competitors)
+                    < 3
+                ):
+                    known = {
+                        brand_name.casefold(),
+                        *(row.name.casefold() for row in competitors),
+                    }
+                    for source in await wikidata_market_sources(client, market):
+                        name = source.title.strip()
+                        if not name or name.casefold() in known or len(name) > 100:
+                            continue
+                        known.add(name.casefold())
+                        researched = await find_competitor(
+                            suggestion(name), terms, seen, extractor, [source]
+                        )
+                        if researched:
+                            competitors.append(researched)
+                        if (
+                            sum(
+                                row.evidence_status == "verified" for row in competitors
+                            )
+                            >= 3
+                        ):
+                            break
+    except (TimeoutError, httpx.HTTPError, AttributeError, TypeError, ValueError):
         incomplete = True
+    competitors.sort(
+        key=lambda row: {"verified": 0, "inferred": 1, "unverified": 2}[
+            row.evidence_status
+        ]
+    )
+    competitors = competitors[:5]
     if incomplete:
         logger.warning("competitor_research incomplete")
         return (
@@ -197,32 +233,91 @@ async def wikidata_sources(
     }
     if not hits:
         return []
+    return (await entity_website_sources(client, list(hits), hits))[:4]
+
+
+async def wikidata_market_sources(
+    client: httpx.AsyncClient, market: str
+) -> list[CandidateSource]:
+    phrase = " ".join(re.findall(r"[\w-]+", market)[:6])
+    if not 8 <= len(phrase) <= 80 or len(phrase.split()) < 2:
+        return []
+    response = await client.get(
+        WIKIDATA_API,
+        params={
+            "action": "query",
+            "generator": "search",
+            "gsrlimit": 8,
+            "gsrsearch": f'"{phrase}" haswbstatement:P856',
+            "format": "json",
+            "formatversion": 2,
+        },
+    )
+    response.raise_for_status()
+    pages = response.json().get("query", {}).get("pages", [])
+    ids = [
+        page["title"]
+        for page in sorted(pages, key=lambda page: page.get("index", 0))[:8]
+        if re.fullmatch(r"Q[1-9]\d*", page.get("title", ""))
+    ]
+    return [
+        source
+        for source in await entity_website_sources(client, ids)
+        if mentions(source.excerpt, phrase)
+    ][:8]
+
+
+async def entity_website_sources(
+    client: httpx.AsyncClient,
+    ids: list[str],
+    hits: dict | None = None,
+) -> list[CandidateSource]:
+    if not ids:
+        return []
     response = await client.get(
         WIKIDATA_API,
         params={
             "action": "wbgetentities",
-            "ids": "|".join(hits),
-            "props": "claims",
+            "ids": "|".join(ids),
+            "props": "claims" if hits else "labels|descriptions|claims",
+            "languages": "en",
             "format": "json",
         },
     )
     response.raise_for_status()
     sources = []
-    for item_id, entity in response.json().get("entities", {}).items():
-        if item_id not in hits:
+    known = response.json().get("entities", {})
+    for item_id in ids:
+        entity = known.get(item_id)
+        if not isinstance(entity, dict):
             continue
-        for claim in entity.get("claims", {}).get("P856", [])[:2]:
+        label = (
+            hits[item_id]["label"]
+            if hits
+            else entity.get("labels", {}).get("en", {}).get("value")
+        )
+        description = (
+            hits[item_id].get("description")
+            if hits
+            else entity.get("descriptions", {}).get("en", {}).get("value")
+        )
+        if not isinstance(label, str):
+            continue
+        claims = entity.get("claims", {}).get("P856", [])
+        for claim in sorted(claims, key=lambda item: item.get("rank") != "preferred")[
+            :2
+        ]:
             address = claim.get("mainsnak", {}).get("datavalue", {}).get("value")
             if isinstance(address, str) and claim.get("rank") != "deprecated":
                 sources.append(
                     CandidateSource(
                         address,
-                        hits[item_id]["label"],
-                        excerpt=hits[item_id].get("description") or "",
+                        label,
+                        excerpt=description or "",
                         reference=f"https://www.wikidata.org/wiki/{item_id}",
                     )
                 )
-    return sources[:4]
+    return sources
 
 
 async def find_competitor(
